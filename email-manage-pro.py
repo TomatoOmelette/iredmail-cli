@@ -7,7 +7,7 @@ import MySQLdb
 from prettytable import from_db_cursor
 
 # iRedAdmin location
-iredadmin_install_path = '/usr/share/apache2/iredadmin'
+iredadmin_install_path = '/opt/www/iredadmin'
 # Add to path list
 sys.path.append(iredadmin_install_path)
 
@@ -145,7 +145,42 @@ def delete_object(domain, mailbox):
     """Delete domain or mailbox from iRedMail"""
     
     if domain:
-        exit_script("Removing whole domains currently not supported", 1)
+        if check_object_exist(domain):
+            print "Do you really want to remove '%s'? (y/n)" % (domain)
+            choice = raw_input().lower()
+            
+            if choice == "y":
+                sql = "DELETE FROM mailbox WHERE domain = '%s'" % (domain)
+                insert_sql_query(db_vmail, sql)
+                sql = "DELETE FROM alias WHERE domain = '%s'" % (domain)
+                insert_sql_query(db_vmail, sql)
+                sql = "DELETE FROM domain_admins WHERE domain = '%s'" % (domain)
+                insert_sql_query(db_vmail, sql)
+                sql = "DELETE FROM forwardings WHERE domain = '%s' OR dest_domain = '%s'" % (domain, domain)
+                insert_sql_query(db_vmail, sql)
+                sql = "DELETE FROM maillists WHERE domain = '%s'" % (domain)
+                insert_sql_query(db_vmail, sql)
+                sql = "DELETE FROM moderators WHERE domain = '%s'" % (domain)
+                insert_sql_query(db_vmail, sql)
+                sql = "DELETE FROM recipient_bcc_domain WHERE domain = '%s'" % (domain)
+                insert_sql_query(db_vmail, sql)
+                sql = "DELETE FROM recipient_bcc_user WHERE domain = '%s'" % (domain)
+                insert_sql_query(db_vmail, sql)
+                sql = "DELETE FROM sender_bcc_domain WHERE domain = '%s'" % (domain)
+                insert_sql_query(db_vmail, sql)
+                sql = "DELETE FROM sender_bcc_user WHERE domain = '%s'" % (domain)
+                insert_sql_query(db_vmail, sql)
+                sql = "DELETE FROM user_quota WHERE domain = '%s'" % (domain)
+                insert_sql_query(db_vmail, sql)
+                sql = "DELETE FROM domain WHERE domain = '%s'" % (domain)
+                insert_sql_query(db_vmail, sql)
+                exit_script("Domain removed", 0)
+
+            else:
+                exit_script("Domain unchanged", 0)
+
+        else:
+            exit_script("Domain not found", 1)
 
     elif mailbox:
 
@@ -277,7 +312,7 @@ def add_object(domain, mailbox):
             '%d',
             '%s',
             '%s',
-            '%d')''' % (username, password, settings.default_language, storageBaseDirectory, storageNode, maildir, 0, domain, local_part, 1)
+            '%d')''' % (username, password, settings.default_language, storageBaseDirectory, storageNode, maildir, 10000, domain, local_part, 1)
         # Insert object to database
         if insert_sql_query(db_vmail, sql):
             print colors.GREEN + "Generated new email account:" + colors.NOC
@@ -300,18 +335,6 @@ def action_add_alias(address, send_to):
         exit_script("Alias address not specified", 1)
     if not send_to:
         exit_script("Alias destination address not specified", 1)
-
-
-    # Decide, list or alias
-    if "," in send_to:
-        is_list = 1
-        is_alias = 0
-        alias_to = ''
-    else:
-        is_list = 0
-        is_alias = 1
-        alias_to = send_to
-    
     # Remove whitespaces
     address = address.strip()
     send_to = send_to.strip()
@@ -324,11 +347,11 @@ def action_add_alias(address, send_to):
                 search_database(False,False,address)
                 ans = raw_input('Would you like to update alias ? (y/n) [n]: ')
                 if ans.lower() == "y":
-                    sql = "UPDATE alias SET goto = '%s', islist = %d, is_alias = %d, alias_to = '%s' WHERE address = '%s' AND domain = '%s'" % (send_to, is_list, is_alias, alias_to, address, domain)
+                    sql = "UPDATE alias SET goto = '%s' WHERE address = '%s' AND domain = '%s'" % (send_to, address, domain)
                 else:
                     exit_script("Exiting", 0)
             else:
-                sql = "INSERT INTO alias (address, goto, domain, islist, is_alias, alias_to) VALUES ('%s', '%s', '%s', %d, %d, '%s')" % (address, send_to, domain, is_list, is_alias, alias_to)
+                sql = "INSERT INTO alias (address, goto, domain, islist) VALUES ('%s', '%s', '%s', 1)" % (address, send_to, domain)
 
             if insert_sql_query(db_vmail,sql):
                 exit_script("Alias updated/added successfully", 0)
@@ -339,6 +362,21 @@ def action_add_alias(address, send_to):
     else:
         exit_script("Invalid domain name", 1)
 
+def set_domain_status(domain, status):
+    if domain:
+        # Remove whitespace chars
+        domain = domain.strip()
+        if not iredutils.is_domain(domain):
+            exit_script("Invalid domain name", 1)
+        if not check_object_exist(domain):
+            exit_script("Not added, domain %s not exist" % (domain), 1)
+
+        sql = "UPDATE domain set active = '%s' WHERE domain ='%s'" % (status, domain)
+        if insert_sql_query(db_vmail, sql):
+            print "Domain: %s\nActive: %s\n" % (domain, status)
+            exit_script("Succesfully updated domain status", 0)
+        else:
+            exit_script("Did not update domain status", 1)
 
 def action_changepass(mailbox, pass_from_prompt):
     """Changing password for mailbox account"""
@@ -408,6 +446,10 @@ addobject.add_argument("--address", dest="alias_address", default=False, help="A
 addobject.add_argument("--send-to", dest="alias_to", default=False, help="Alias destination addresses separated by comas")
 addobject.add_argument("--list-user-aliases", dest="action_list_user_aliases", default=False, help="List aliases directing to username - example petr.burian@livesport.eu")
 
+astatus = parser.add_argument_group('Set account active state', 'Changed status for domain')
+astatus.add_argument("-z", action="store_true", dest="set_domain_status", default=False, help="Change account active status for domain")
+astatus.add_argument("-y", dest="status", default=False, help="Account status")
+
 parserchpw = parser.add_argument_group('Change password','Change password for mailbox')
 parserchpw.add_argument("-w", action="store_true", dest="action_changepass", default=False, help="Change password for mailbox")
 parserchpw.add_argument("-p", dest="pass_from_prompt", default=False, help="Password used when changing password for mailbox")
@@ -415,7 +457,6 @@ parserchpw.add_argument("-p", dest="pass_from_prompt", default=False, help="Pass
 commonargs = parser.add_argument_group('Common options', 'Some of the arguments are common for entire CLI')
 commonargs.add_argument("-d", dest="domain", default=False, help="Search, Add or delete domain")
 commonargs.add_argument("-m", dest="mailbox", default=False, help="Search mailbox, Add new mailbox, Change password for mailbox")
-
 
 args = parser.parse_args()
 
@@ -470,6 +511,8 @@ elif args.action_add:
     add_object(args.domain, args.mailbox)
 elif args.action_delete:
     delete_object(args.domain, args.mailbox)
+elif args.set_domain_status:
+    set_domain_status(args.domain, args.status)
 elif args.action_changepass:
     action_changepass(args.mailbox, args.pass_from_prompt)
 elif args.action_add_alias:
